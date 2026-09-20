@@ -1,11 +1,10 @@
 CC = cc
 CFLAGS = -std=c11 -Wall -Wextra -Wpedantic -Iinclude
 
-all: monitor
+all: A_monitor
 
-monitor: src/main.c src/config.c src/monitor.c
-	$(CC) $(CFLAGS) src/main.c src/config.c src/monitor.c -o monitor
+A_monitor: src/A_main.c src/A_config.c src/A_monitor.c
+	$(CC) $(CFLAGS) src/A_main.c src/A_config.c src/A_monitor.c -o A_monitor
 
 clean:
-	rm -f monitor
-
+	rm -f A_monitor

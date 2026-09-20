@@ -12,4 +12,3 @@ typedef struct {
 int load_config(const char *filename, Config *config);
 
 #endif
-

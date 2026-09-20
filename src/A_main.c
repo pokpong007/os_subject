@@ -1,12 +1,12 @@
-#include "config.h"
-#include "monitor.h"
+#include "A_config.h"
+#include "A_monitor.h"
 
 #include <stdio.h>
 #include <unistd.h>
 
 int main(int argc, char *argv[])
 {
-    const char *config_file = "config.txt";
+    const char *config_file = "A_config.txt";
     if (argc > 1) {
         config_file = argv[1];
     }
@@ -39,4 +39,3 @@ int main(int argc, char *argv[])
         sleep((unsigned int)config.interval);
     }
 }
-

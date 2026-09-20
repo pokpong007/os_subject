@@ -1,4 +1,4 @@
-#include "config.h"
+#include "A_config.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -48,4 +48,3 @@ int load_config(const char *filename, Config *config)
 
     return 0;
 }
-

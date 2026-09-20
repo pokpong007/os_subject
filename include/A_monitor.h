@@ -18,4 +18,3 @@ MonitorStatus check_process(pid_t pid, const char *host, int port, int timeout,
 const char *monitor_status_text(MonitorStatus status);
 
 #endif
-
