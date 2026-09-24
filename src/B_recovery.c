@@ -3,6 +3,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <errno.h>
 #include <unistd.h>
 #include <signal.h>
 #include <sys/types.h>
@@ -22,7 +23,12 @@ static pid_t start_server(const BConfig* config);
 
 static int wait_for_process(pid_t pid);
 
+static int stop_process(pid_t pid);
+
+static int process_is_zombie(pid_t pid);
+
 static int wait_for_server(
+    pid_t pid,
     const char* host,
     int port
 );
@@ -76,8 +82,26 @@ RecoveryResult recover_process(
     result.success = 0;
     result.new_pid = -1;
 
+    if (request == NULL || config == NULL) {
+        return result;
+    }
+
     printf("Recovery started\n");
-    printf("Old PID: %d\n", request->old_pid);
+    printf("Old PID: %ld\n", (long)request->old_pid);
+
+    if (request->reason != FAILURE_PROCESS_MISSING &&
+        stop_process(request->old_pid) == -1) {
+        log_recovery(
+            config,
+            request->old_pid,
+            failure_reason_to_string(request->reason),
+            "Failed to stop old process",
+            0,
+            -1
+        );
+        printf("Failed to stop old process\n");
+        return result;
+    }
 
 
     // --------------------------------------------------------
@@ -113,7 +137,7 @@ RecoveryResult recover_process(
         return result;
     }
 
-    printf("New PID: %d\n", new_pid);
+    printf("New PID: %ld\n", (long)new_pid);
 
 
     // --------------------------------------------------------
@@ -132,6 +156,7 @@ RecoveryResult recover_process(
         );
 
         printf("Server process failed to start\n");
+        stop_process(new_pid);
 
         return result;
     }
@@ -142,6 +167,7 @@ RecoveryResult recover_process(
     // --------------------------------------------------------
 
     if (!wait_for_server(
+        new_pid,
         config->host,
         config->port
     )) {
@@ -156,6 +182,7 @@ RecoveryResult recover_process(
         );
 
         printf("Minecraft server failed to become ready\n");
+        stop_process(new_pid);
 
         return result;
     }
@@ -180,6 +207,7 @@ RecoveryResult recover_process(
         );
 
         printf("Failed to write PID file\n");
+        stop_process(new_pid);
 
         return result;
     }
@@ -207,7 +235,7 @@ RecoveryResult recover_process(
     result.new_pid = new_pid;
 
     printf("Recovery SUCCESS\n");
-    printf("New PID: %d\n", new_pid);
+    printf("New PID: %ld\n", (long)new_pid);
 
     return result;
 }
@@ -283,17 +311,95 @@ static pid_t start_server(const BConfig* config)
 
 static int wait_for_process(pid_t pid)
 {
+    int status;
+    pid_t result = waitpid(pid, &status, WNOHANG);
+
+    if (result == pid) {
+        return 0;
+    }
+
+    if (result == 0) {
+        return 1;
+    }
+
+    if (errno == ECHILD) {
+        return kill(pid, 0) == 0 || errno == EPERM;
+    }
+
+    return 0;
+}
+
+static int process_is_zombie(pid_t pid)
+{
+    char path[64];
+    char line[256];
+    char state = '?';
+
+    snprintf(path, sizeof(path), "/proc/%ld/status", (long)pid);
+    FILE* file = fopen(path, "r");
+    if (file == NULL) {
+        return 0;
+    }
+
+    while (fgets(line, sizeof(line), file) != NULL) {
+        if (sscanf(line, "State:\t%c", &state) == 1) {
+            break;
+        }
+    }
+
+    fclose(file);
+    return state == 'Z';
+}
+
+static int stop_process(pid_t pid)
+{
+    if (pid <= 0 || process_is_zombie(pid)) {
+        return 0;
+    }
+
+    if (kill(pid, 0) == -1) {
+        return errno == ESRCH ? 0 : -1;
+    }
+
+    if (kill(pid, SIGTERM) == -1 && errno != ESRCH) {
+        return -1;
+    }
+
     for (int i = 0; i < 10; i++) {
+        int status;
+        pid_t result = waitpid(pid, &status, WNOHANG);
 
-        if (kill(pid, 0) == 0) {
+        if (result == pid || process_is_zombie(pid)) {
+            return 0;
+        }
 
-            return 1;
+        if (kill(pid, 0) == -1 && errno == ESRCH) {
+            return 0;
         }
 
         sleep(1);
     }
 
-    return 0;
+    if (kill(pid, SIGKILL) == -1 && errno != ESRCH) {
+        return -1;
+    }
+
+    for (int i = 0; i < 5; i++) {
+        int status;
+        pid_t result = waitpid(pid, &status, WNOHANG);
+
+        if (result == pid || process_is_zombie(pid)) {
+            return 0;
+        }
+
+        if (kill(pid, 0) == -1 && errno == ESRCH) {
+            return 0;
+        }
+
+        sleep(1);
+    }
+
+    return -1;
 }
 
 
@@ -302,11 +408,16 @@ static int wait_for_process(pid_t pid)
 // ============================================================
 
 static int wait_for_server(
+    pid_t pid,
     const char* host,
     int port
 )
 {
     for (int i = 0; i < 60; i++) {
+
+        if (!wait_for_process(pid)) {
+            return 0;
+        }
 
         int sock = socket(
             AF_INET,
@@ -404,8 +515,8 @@ static int write_pid_file(
 
     fprintf(
         file,
-        "%d\n",
-        pid
+        "%ld\n",
+        (long)pid
     );
 
     fclose(file);
